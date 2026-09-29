@@ -1,18 +1,29 @@
 import NextAuth from "next-auth"
 import GitHub from "next-auth/providers/github"
-import Google from "next-auth/providers/google"
 import { DrizzleAdapter } from "@auth/drizzle-adapter"
 import { createDb, Db } from "./db"
 import { accounts, users, roles, userRoles } from "./schema"
 import { eq } from "drizzle-orm"
 import { getRequestContext } from "@cloudflare/next-on-pages"
 import { Permission, hasPermission, ROLES, Role } from "./permissions"
-import CredentialsProvider from "next-auth/providers/credentials"
-import { hashPassword, comparePassword } from "@/lib/utils"
-import { authSchema, AuthSchema } from "@/lib/validation"
 import { generateAvatarUrl } from "./avatar"
 import { getUserId } from "./apiKey"
-import { verifyTurnstileToken } from "./turnstile"
+
+/**
+ * 站点已改为私有：仅允许所有者本人通过 GitHub 登录/注册。
+ * 其他任何账号（包括密码注册）一律拒绝。
+ */
+const OWNER_GITHUB_IDS = ["249290191"]
+const OWNER_EMAILS = ["hi@zhangyang.dev"]
+
+/** 判断某个 Auth.js 用户是否为所有者本人 */
+export function isOwnerUser(user: { email?: string | null } | null | undefined, account?: { provider?: string; providerAccountId?: string | null } | null) {
+  const githubId = String(account?.providerAccountId ?? "")
+  if (githubId && OWNER_GITHUB_IDS.includes(githubId)) return true
+
+  const email = (user?.email ?? "").toLowerCase()
+  return email.length > 0 && OWNER_EMAILS.includes(email)
+}
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   [ROLES.EMPEROR]: "皇帝（网站所有者）",
@@ -105,61 +116,6 @@ export const {
       clientSecret: process.env.AUTH_GITHUB_SECRET,
       allowDangerousEmailAccountLinking: true,
     }),
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    }),
-    CredentialsProvider({
-      name: "Credentials",
-      credentials: {
-        username: { label: "用户名", type: "text", placeholder: "请输入用户名" },
-        password: { label: "密码", type: "password", placeholder: "请输入密码" },
-      },
-      async authorize(credentials) {
-        if (!credentials) {
-          throw new Error("请输入用户名和密码")
-        }
-
-        const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
-
-        let parsedCredentials: AuthSchema
-        try {
-          parsedCredentials = authSchema.parse({ username, password, turnstileToken })
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (error) {
-          throw new Error("输入格式不正确")
-        }
-
-        const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
-        if (!verification.success) {
-          if (verification.reason === "missing-token") {
-            throw new Error("请先完成安全验证")
-          }
-          throw new Error("安全验证未通过")
-        }
-
-        const db = createDb()
-
-        const user = await db.query.users.findFirst({
-          where: eq(users.username, parsedCredentials.username),
-        })
-
-        if (!user) {
-          throw new Error("用户名或密码错误")
-        }
-
-        const isValid = await comparePassword(parsedCredentials.password, user.password as string)
-        if (!isValid) {
-          throw new Error("用户名或密码错误")
-        }
-
-        return {
-          ...user,
-          password: undefined,
-        }
-      },
-    }),
   ],
   events: {
     async signIn({ user }) {
@@ -182,6 +138,21 @@ export const {
     },
   },
   callbacks: {
+    async signIn({ user, account, profile }) {
+      // 只允许所有者本人的 GitHub 账号登录，其他一律拒绝（返回 false 会跳到 AccessDenied）
+      if (account?.provider !== "github") return false
+
+      const githubId = String(account.providerAccountId ?? "")
+      const profileEmail = (profile as { email?: string } | undefined)?.email
+      const email = (user.email ?? profileEmail ?? "").toLowerCase()
+
+      if (!isOwnerUser(user, account)) {
+        console.warn(`[auth] blocked sign-in attempt: githubId=${githubId || "?"} email=${email || "?"}`)
+        return false
+      }
+
+      return true
+    },
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id
@@ -235,25 +206,7 @@ export const {
   },
 }))
 
-export async function register(username: string, password: string) {
-  const db = createDb()
-
-  const existing = await db.query.users.findFirst({
-    where: eq(users.username, username)
-  })
-
-  if (existing) {
-    throw new Error("用户名已存在")
-  }
-
-  const hashedPassword = await hashPassword(password)
-
-  const [user] = await db.insert(users)
-    .values({
-      username,
-      password: hashedPassword,
-    })
-    .returning()
-
-  return user
+export async function register() {
+  // 站点已私有化：不再开放用户名/密码注册，仅所有者本人可通过 GitHub 登录
+  throw new Error("注册已关闭")
 }

@@ -1,4 +1,4 @@
-import { auth, assignRoleToUser } from "@/lib/auth";
+import { auth, assignRoleToUser, isOwnerUser } from "@/lib/auth";
 import { createDb } from "@/lib/db";
 import { roles, userRoles } from "@/lib/schema";
 import { ROLES } from "@/lib/permissions";
@@ -10,6 +10,11 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
     return Response.json({ error: "未授权" }, { status: 401 });
+  }
+
+  // 站点已私有化：只有所有者本人可以初始化皇帝角色
+  if (!isOwnerUser(session.user, null)) {
+    return Response.json({ error: "无权限" }, { status: 403 });
   }
 
   const db = createDb();
