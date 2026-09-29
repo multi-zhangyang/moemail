@@ -99,58 +99,6 @@ export async function checkPermission(permission: Permission) {
   return hasPermission(userRoleNames as Role[], permission)
 }
 
-/**
- * 临时诊断（用完即删）：Cloudflare Pages 此部署无法 tail 日志，
- * 所以把 Auth.js 的错误对象（含 cause.err 原始堆栈）写进 KV 供排查。
- */
-const AUTH_DEBUG_KEY = "_AUTH_DEBUG"
-
-function truncate(v: unknown, max = 800): unknown {
-  return typeof v === "string" && v.length > max ? v.slice(0, max) + "…" : v
-}
-
-function recordAuthError(error: Error) {
-  try {
-    const { env, ctx } = getRequestContext()
-    const anyErr = error as unknown as Record<string, any>
-    const cause = anyErr?.cause
-    const inner = cause?.err
-
-    const entry = {
-      t: new Date().toISOString(),
-      type: anyErr?.type ?? anyErr?.name,
-      message: truncate(anyErr?.message),
-      causeType: cause?.type,
-      causeMessage: truncate(cause?.message),
-      innerName: inner?.name,
-      innerMessage: truncate(inner?.message),
-      innerStatus: inner?.status,
-      innerCode: inner?.code,
-      innerError: inner?.error,
-      innerErrorDescription: truncate(inner?.error_description),
-      innerStack: truncate(inner?.stack, 2500),
-      stack: truncate(anyErr?.stack, 2500),
-    }
-
-    const write = Promise.resolve(env.SITE_CONFIG.get(AUTH_DEBUG_KEY))
-      .then((prev) => {
-        let list: unknown[] = []
-        try {
-          list = prev ? JSON.parse(prev) : []
-        } catch {
-          list = []
-        }
-        list.push(entry)
-        return env.SITE_CONFIG.put(AUTH_DEBUG_KEY, JSON.stringify(list.slice(-10)))
-      })
-      .catch(() => undefined)
-
-    ctx?.waitUntil?.(write)
-  } catch {
-    // 诊断失败不能影响正常流程
-  }
-}
-
 export const {
   handlers: { GET, POST },
   auth,
@@ -158,11 +106,6 @@ export const {
   signOut
 } = NextAuth(() => ({
   secret: process.env.AUTH_SECRET,
-  logger: {
-    error(error) {
-      recordAuthError(error)
-    },
-  },
   adapter: DrizzleAdapter(createDb(), {
     usersTable: users,
     accountsTable: accounts,
