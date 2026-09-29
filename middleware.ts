@@ -19,7 +19,7 @@ export async function middleware(request: Request) {
   const pathname = url.pathname
 
   if (pathname.startsWith('/api')) {
-    if (pathname.startsWith('/api/auth') || pathname.startsWith('/api/diag-token')) {
+    if (pathname.startsWith('/api/auth')) {
       return NextResponse.next()
     }
 

@@ -172,6 +172,15 @@ export const {
       clientId: process.env.AUTH_GITHUB_ID,
       clientSecret: process.env.AUTH_GITHUB_SECRET,
       allowDangerousEmailAccountLinking: true,
+      // GitHub 从 2026-04 起会在 OAuth 回调里带上 iss 参数（RFC 9207）。
+      // @auth/core 的 GitHub provider 没有配置 issuer，校验时会拿占位值
+      // "https://authjs.dev" 去比对，于是抛 CallbackRouteError:
+      //   unexpected "iss" (issuer) response parameter value
+      // 显式声明 issuer 即可通过校验。authorization/token/userinfo 三个端点
+      // 仍取 GitHub 默认值，不会被 issuer 覆盖（见 normalizeOAuth/normalizeEndpoint：
+      // scope 已由 GitHub provider 的 params 写入 searchParams，故不会被改成
+      // "openid profile email"）。
+      issuer: "https://github.com/login/oauth",
     }),
   ],
   events: {
